@@ -1,0 +1,301 @@
+---
+title: "Religion-Voter Turnout Project"
+output:
+  pdf_document: default
+  PDF: default
+---
+
+## Introduction
+
+
+### Read in data
+```{r}
+library(readxl)
+religion <- read_excel("religion_census.xlsx")
+head(religion)
+```
+We only want data on predominantly African-American religious institutions to analyze the effects of Black Churches on voter turnout in the South. And we will narrow the data to a few states in the deep south: South Carolina, Georgia, Louisiana, Alabama, and Mississippi.
+
+To understand what churches have the greatest impact, the Conference of National Black Churches provides a starting point. The organization said it represents more than 80% of African-American Christians, or around 20 million people in the U.S. It is made up of seven predominantly African-American Churches:
+
+- African Methodist Episcopal Church (AME)
+- African Methodist Episcopal Zion Church (AMEZ)
+- Christian Methodist Episcopal Church (CME)
+- Church of God In Christ (COGIC)
+- National Baptist Convention of America, Inc., International (NBCA)
+- National Baptist Convention, U. S. A. Inc. (NBC USA)
+- Progressive National Baptist Convention, Inc. (PNBC) 
+
+However, the convention does not include Black Protestants, which we will add on to the dataset.
+We now go into the dataset to filter for these denominations.
+
+### Filtering data
+```{r}
+library(dplyr)
+library(tidyr)
+#identify the abbreviations of 5 states we want to include
+southern_states <- c("SC", "GA", "LA", "AL", "MS")
+#identified the denominations' codes in the codebook
+aa_denominations <- c("AMECNG", "AMEADH", "AMERATE", "AMEZCNG", "AMEZADH", "AMEZRATE", "CMECNG", "CMEADH", "CMERATE", "CGCCNG", "CGCADH", "CGCRATE", "NBCACNG", "NBCAADH", "NBCARATE", "NBCCNG", "NBCADH", "NBCRATE", "PNBCCNG", "PNBCADH", "PNBCRATE", "BPRTCNG", "BPRTADH", "BPRTRATE")
+other_variables <- c("TOTCNG", "TOTADH", "TOTRATE", "FIPS", "STABBR", "CNTYNAME", "CNTYCODE", "POP2010")
+
+southern_aa <- religion[c(other_variables, aa_denominations)] %>% 
+  filter(STABBR  %in% southern_states) #data frame with all the African-American churches in the 5 states
+```
+
+#### Sanity check
+```{r}
+#we check if the number of counties in the dataframe matches up with the number of counties there are in the 5 states 
+#LA has 64 states, AL has 67, GA has 159, SC has 46 and MS has 82.
+nrow(southern_aa) == 64 + 67 + 159 + 46 + 82
+
+#we also check whether total adherents are less than total adherents in the county
+adh_var <- c("AMEADH", "AMEZADH", "CMEADH", "CGCADH", "NBCAADH", "NBCADH", "PNBCADH", "BPRTADH")
+for (i in adh_var) {
+  if (any(southern_aa[[i]] > southern_aa$TOTADH, na.rm = TRUE)) {i}
+}
+#check if total adherents are less than total population
+which(southern_aa$TOTADH > southern_aa$POP2010)
+```
+
+### Clean up NAs
+```{r}
+library(visdat)
+vis_miss(southern_aa) 
+```
+
+We observe that the dataset has a lot of missing data, attributed to the fact that some counties simply do not have an predominantly African-American church present.
+*Note: There are a few denominations that has a higher missing data rate for their rate of adherents than they do for the total congregations variable. Namely: CGCC (Church of God in Christ), NBCA (National Baptist Convention of America Inc.) NBC (National Baptist Convention U.S.A), PNBC (Progressive National Baptist Convention, Inc.), BPRT (Black Protestants)*
+We now examine what accounts for those inconsistencies.
+
+```{r}
+cng_var_miss <- c("CGCCNG", "NBCACNG", "NBCCNG", "PNBCCNG", "BPRTCNG")
+adh_var_miss <- c("CGCADH", "NBCAADH", "NBCADH", "PNBCADH", "BPRTADH")
+rate_var_miss <- c("CGCRATE", "NBCARATE", "NBCRATE", "PNBCRATE", "BPRTRATE")
+check_rate <- vector(length = 3)
+for (i in 1:5){
+  print(southern_aa[!is.na(southern_aa[cng_var_miss[i]]) & is.na(southern_aa[rate_var_miss[i]]), c(cng_var_miss[i], adh_var_miss[i], rate_var_miss[i])])
+}
+#the adherents numbers in these counties' denominations are 0, therefore we can code the rate as 0.
+```
+
+
+```{r}
+cng_var <- c("AMECNG", "AMEZCNG", "CMECNG", "CGCCNG", "NBCACNG", "NBCCNG", "PNBCCNG", "BPRTCNG")
+table(apply(is.na(southern_aa[cng_var]), 1, sum))
+```
+
+The table examines how many denominations are absent in any given county. We find that 7 counties have all denominations present and 8 counties has none. 
+
+```{r}
+southern_aa[is.na(southern_aa)] <- 0
+#verify that the dataset now has no missing values
+```
+We want to combine all the data on the denominations into one coherent set of data for the number of predominently African-American congregations, adherents and adherent rates for each county. This makes it easier to conduct analysis but also could expose the data to variations across different denominations. 
+
+```{r}
+rate_var <- c("AMERATE", "AMEZRATE", "CMERATE", "CGCRATE", "NBCARATE", "NBCRATE", "PNBCRATE", "BPRTRATE")
+cng_var <- c("AMECNG", "AMEZCNG", "CMECNG", "CGCCNG", "NBCACNG", "NBCCNG", "PNBCCNG", "BPRTCNG")
+southern_aa$AA_CNG <- apply(southern_aa[cng_var], 1, sum)
+southern_aa$AA_ADH <- apply(southern_aa[adh_var], 1, sum)
+southern_aa$AA_RATE <- apply(southern_aa[rate_var], 1, sum)
+```
+
+### EDA on the Religion dataset
+```{r}
+library(ggplot2)
+#boxplots of denominations' adherents rate in counties
+rate_var <- c("AMERATE", "AMEZRATE", "CMERATE", "CGCRATE", "NBCARATE", "NBCRATE", "PNBCRATE", "BPRTRATE")
+rate_data <- southern_aa %>% 
+  gather(key = "denomination", value = "rate", c(11, 14, 17, 20, 23, 26, 29, 32))
+ggplot(data = rate_data, aes(x = denomination, y = rate)) + 
+  geom_boxplot() + 
+  labs(x = "Name of Denomination", y = "Rate of adherents per 1000 people")
+  
+ggplot(data = southern_aa, aes(x = STABBR, y = AA_RATE)) +
+  geom_boxplot() + 
+  labs(x = "State", y = "Rate of adherents per 1000 people") + 
+  geom_hline(aes(yintercept = 50, color = "red"))
+  
+```
+### Import election result data by county
+```{r}
+library(visdat)
+pres_county <- read.csv("countypres_2000-2020.csv")
+vis_miss(pres_county)
+which(is.na(pres_county$county_fips)) %in% southern_aa$FIPS
+#none of the missing fips are in the southern states dataset
+pres_southern <- right_join(pres_county, southern_aa, by = c("county_fips" = "FIPS"))
+pres_clean <- pres_southern %>% 
+  filter(party == "DEMOCRAT") %>% 
+  mutate(dem_share = candidatevotes/totalvotes) %>% 
+  select(-c("office", "candidate", "party", "version", "mode", "county_name", "state_po", "state"))
+```
+
+### Visualize
+```{r}
+outcome <- pres_clean$dem_share > 0.5
+outcome_char <- as.character(outcome)
+outcome_char[outcome] <- "Majority"
+outcome_char[!outcome] <- "Minority"
+outcome_char <- factor(outcome_char, levels = c("Minority", "Majority"))
+g_pres_church <- ggplot(data = pres_clean, aes(x = AA_RATE, y = dem_share))
+g_pres_church + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = outcome_char, size = AA_ADH)) + 
+  guides(alpha = "none") + 
+  labs(x = "Number of Predominantly African-American Churches' Adherents per 1000 people in the county", y = "Share of votes for the Democratic candidate", color = "Democratic Vote",size = "Total Adherents")
+```
+
+#2008 & 2012 performance of Presidential candidates
+```{r}
+#2008 vote
+pres_2008 <- pres_clean %>% 
+  filter(year == 2008)
+
+#encode the outcome variable as dem majority/minority
+outcome_2008 <- pres_2008$dem_share > 0.5
+outcome_2008_char <- as.character(outcome_2008)
+outcome_2008_char[outcome_2008] <- "Majority"
+outcome_2008_char[!outcome_2008] <- "Minority"
+outcome_2008_char <- factor(outcome_2008_char, levels = c("Minority", "Majority"))
+
+#graph rate vs. dem_share
+g_pres_church_2008 <- ggplot(data = pres_2008, aes(x = AA_RATE, y = dem_share))
+g_pres_church_visa2008 <- g_pres_church_2008 + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = outcome_2008_char, size = POP2010)) + 
+  guides(alpha = "none") + 
+  labs(x = "Number of Predominantly African-American Churches' Adherents per 1000 people in the county", y = "Share of votes for Obama", color = "Democratic Vote Share", size = "County Population", title = "2008 Presidential Election Vote by County")
+#ggsave("scatterplot_2018.png", width = 10, height = 6)
+
+#2012 vote
+pres_2012 <- pres_clean %>% 
+  filter(year == 2012)
+
+#encode the outcome variable as dem majority/minority
+outcome_2012 <- pres_2012$dem_share > 0.5
+outcome_2012_char <- as.character(outcome_2012)
+outcome_2012_char[outcome_2012] <- "Majority"
+outcome_2012_char[!outcome_2012] <- "Minority"
+outcome_2012_char <- factor(outcome_2012_char, levels = c("Minority", "Majority"))
+
+#graph rate vs. dem_share
+g_pres_church_2012 <- ggplot(data = pres_2012, aes(x = AA_RATE, y = dem_share))
+g_pres_church_visa <- g_pres_church_2012 + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = outcome_2012_char, size = POP2010)) + 
+  guides(alpha = "none") + 
+  labs(x = "Number of Predominantly African-American Churches' Adherents per 1000 people in the county", y = "Share of votes for Obama", color = "Democratic Vote Share", size = "County Population", title = "2012 Presidential Election Vote by County")
+g_pres_church_visa
+#ggsave("scatterplot.png", width = 10, height = 6)
+```
+
+##### Try fitting the model
+```{r}
+fit <- lm(pres_2012$dem_share ~ pres_2012$AA_RATE)
+summary(fit)
+fit2 <- lm(pres_2008$dem_share ~ pres_2008$AA_RATE)
+summary(fit2)
+```
+
+## Case Study: Louisiana
+```{r}
+Louisiana_2012_raw <- read_excel("LA_2012_1106_sta.xls", sheet = 1)
+Louisiana_2012_raw <- Louisiana_2012_raw %>% 
+  slice(-c(1:6, 9)) %>% 
+  select(-c(1,3,5,7,9,11,13,15,17,19))
+
+colnames(Louisiana_2012_raw) <- c("Jurisdiction", "Total", "Black_total_reg", "Dem_total_reg", "Black_dem_reg", "Rep_total_reg", "Black_rep_reg", "Third_total_reg" , "Black_third_reg") 
+
+Louisiana_2012_raw1 <- Louisiana_2012_raw %>% slice(-c(1,2))
+
+Louisiana_2012_voting_total <- Louisiana_2012_raw1 %>% 
+  filter(Jurisdiction == "# VOTING") %>% 
+  select(-1) %>% 
+  apply(MARGIN = 2, FUN = as.integer) %>% 
+  as.data.frame()
+colnames(Louisiana_2012_voting_total) <- c("Total_vote", "Black_total_vote", "Dem_total_vote", "Black_dem_vote", "Rep_total_vote", "Black_rep_vote", "Third_total_vote", "Black_third_vote")
+
+Louisiana_2012_vote_prop <- Louisiana_2012_raw1 %>% 
+  filter(Jurisdiction == "% VOTING") %>% 
+  select(-1) %>% 
+  apply(MARGIN = 2, FUN = as.integer) %>% 
+  as.data.frame()
+colnames(Louisiana_2012_vote_prop) <- c("Total_vote_prop", "Black_total_vote_prop", "Dem_total_vote_prop", "Black_dem_vote_prop", "Rep_total_vote_prop", "Black_rep_vote_prop", "Third_total_vote_prop", "Black_third_vote_prop")
+
+Louisiana_2012_registration <- Louisiana_2012_raw1 %>% 
+  filter(Jurisdiction != "# VOTING" & Jurisdiction != "% VOTING")
+
+Louisiana_2012_general <- cbind(Louisiana_2012_registration, Louisiana_2012_voting_total, Louisiana_2012_vote_prop)
+Louisiana_2012_general$Total <- as.numeric(Louisiana_2012_general$Total)
+```
+### Plotting Louisiana dem_share against rate of predonimantly AA churches adherents
+```{r}
+pres_LA_2012 <- pres_clean %>% 
+  filter(STABBR == "LA" & year == 2012) %>% 
+  select(-c("CNTYNAME", "year")) %>% 
+  mutate(Jurisdiction = Louisiana_2012_general[-1,]$Jurisdiction)
+
+Louisiana_general_AA <- right_join(Louisiana_2012_general[-1,], pres_LA_2012, by = "Jurisdiction")
+
+#graph rate vs. dem_share
+outcome_LA_2012 <- Louisiana_general_AA$dem_share > 0.5
+outcome_LA_2012_char <- as.character(outcome_LA_2012)
+outcome_LA_2012_char[outcome_LA_2012] <- "Majority"
+outcome_LA_2012_char[!outcome_LA_2012] <- "Minority"
+outcome_LA_2012_char <- factor(outcome_LA_2012_char, levels = c("Minority", "Majority"))
+
+g_pres_LA_2012 <- ggplot(data = Louisiana_general_AA, aes(x = AA_RATE, y = dem_share))
+g_pres_LA_2012 + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = outcome_LA_2012_char, size = POP2010)) + 
+  guides(alpha = "none") + 
+  labs(x = "Number of Predominantly African-American Churches' Adherents per 1000 people in the county", y = "Share of votes for Obama", color = "Democratic Vote Share", size = "County Population", title = "2012 Presidential Election Vote in Louisiana by County")
+```
+### Plot Turnout against Rate of Adherents to Predominantly African-American Churches
+```{r}
+g_turnout_LA_2012 <- ggplot(data = Louisiana_general_AA, aes(x = AA_RATE, y = Black_total_vote_prop))
+g_turnout_LA_2012 + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = dem_share, size = AA_ADH)) + 
+  guides(alpha = "none") + 
+    labs(x = "Rate of Adherents to Predominantly African-American Churches' Adherents (per 1000)", y = "Turnout to Registered Black voter Proportions (in %) ", color = "Democratic Vote Share", size = "Total Adherents", title = "2012 Presidential Election African-American Turnout in Louisiana by County") + 
+  scale_color_gradient(low = "red", high = "blue")
+ggsave("louisiana_turnout.png", width = 10, height = 6)
+```
+```{r}
+g_turnout_LA_2012_dem <- ggplot(data = Louisiana_general_AA, aes(x = AA_RATE, y = Black_dem_vote_prop))
+LA_turnout_2021_dem <- g_turnout_LA_2012_dem + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = dem_share, size = AA_ADH)) + 
+  guides(alpha = "none") + 
+  labs(x = "Rate of Adherents to Predominantly African-American Churches' Adherents (per 1000)", y = "Turnout among Registered Black voter Proportions (in %) ", color = "Democratic Vote Share", size = "Total Adherents", title = "Turnout among registered African-American Democrats in Louisiana's 2012 General Election by County") + 
+  scale_color_gradient(low = "red", high = "blue")
+
+g_turnout_LA_2012_rep <- ggplot(data = Louisiana_general_AA, aes(x = AA_RATE, y = Black_rep_vote_prop))
+LA_turnout_2021_rep <- g_turnout_LA_2012_rep + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = dem_share, size = AA_ADH)) + 
+  guides(alpha = "none") + 
+  labs(x = "Rate of Adherents to Predominantly African-American Churches' Adherents (per 1000)", y = "Turnout among Registered Black voter Proportions (in %) ", color = "Democratic Vote Share", size = "Total Adherents", title = "Turnout among registered African-American Republicans in Louisiana's 2012 General Election by County") + 
+  scale_color_gradient(low = "red", high = "blue")
+
+g_turnout_LA_2012_third <- ggplot(data = Louisiana_general_AA, aes(x = AA_RATE, y = Black_third_vote_prop))
+LA_turnout_2021_third <- g_turnout_LA_2012_third + 
+  geom_smooth(method = "lm") + 
+  geom_point(aes(alpha = 0.05, color = dem_share, size = AA_ADH)) + 
+  guides(alpha = "none") + 
+  labs(x = "Rate of Adherents to Predominantly African-American Churches' Adherents (per 1000)", y = "Turnout among Registered Black voter Proportions (in %) ", color = "Democratic Vote Share", size = "Total Adherents", title = "Turnout among registered African-American Third-party voters in Louisiana's 2012 General Election by County") + 
+  scale_color_gradient(low = "red", high = "blue")
+par(mfrow = c(1, 3))
+LA_turnout_2021_dem
+ggsave("louisiana_turnout_dem.png", width = 10, height = 6)
+LA_turnout_2021_rep
+ggsave("louisiana_turnout_rep.png", width = 10, height = 6)
+LA_turnout_2021_third
+ggsave("louisiana_turnout_third.png", width = 10, height = 6)
+```
+
+
+
